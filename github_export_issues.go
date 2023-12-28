@@ -17,6 +17,7 @@ import (
 var pretty = flag.Bool("pretty", false, "Pretty Print JSON")
 var authToken = flag.String("auth_token", "", "Auth token for better rate limits")
 var state = flag.String("state", "all", "Issue state")
+var issueID = flag.Int("issue-id", -1, "Only export 1 issue")
 
 func main() {
 	flag.Parse()
@@ -62,6 +63,25 @@ func main() {
 		enc.SetIndent("", "  ")
 	}
 
+	if *issueID > 0 {
+		issue, _, err := client.Issues.Get(ctx, owner, repo, *issueID)
+		if err != nil {
+			log.Fatalf("Fetch issue %d for %s/%s failed: %s", *issueID, owner, repo, err)
+		}
+		allComments, err := fetchComments(ctx, client, owner, repo, issue)
+		if err != nil {
+			log.Fatalf("fetch comments for issue %s/%s failed: %s", owner, repo, err)
+		}
+
+		enc.Encode(Issue{
+			Issue:    *issue,
+			Comments: allComments,
+		})
+
+		os.Exit(0)
+
+	}
+
 	var issueOps github.IssueListByRepoOptions
 	issueOps.State = *state
 	for {
@@ -70,23 +90,10 @@ func main() {
 			log.Fatalf("Fetch issues for %s/%s failed: %s", owner, repo, err)
 		}
 		for _, issue := range issues {
-			var commentOps github.IssueListCommentsOptions
-			var allComments []github.IssueComment
 
-			for {
-				comments, commentsResp, err := client.Issues.ListComments(ctx, owner, repo, issue.GetNumber(), &commentOps)
-				if err != nil {
-					log.Fatalf("Fetch comments for issue %s/%s failed: %s", owner, repo, err)
-				}
-
-				for _, comment := range comments {
-					allComments = append(allComments, *comment)
-				}
-
-				if commentsResp.NextPage == 0 {
-					break
-				}
-				commentOps.Page = commentsResp.NextPage
+			allComments, err := fetchComments(ctx, client, owner, repo, issue)
+			if err != nil {
+				log.Fatalf("fetch comments for issue %s/%s failed: %s", owner, repo, err)
 			}
 
 			enc.Encode(Issue{
@@ -101,6 +108,30 @@ func main() {
 
 		issueOps.Page = issuesResp.NextPage
 	}
+}
+
+func fetchComments(ctx context.Context, client *github.Client, owner, repo string, issue *github.Issue) ([]github.IssueComment, error) {
+	var commentOps github.IssueListCommentsOptions
+	var allComments []github.IssueComment
+
+	for {
+		comments, commentsResp, err := client.Issues.ListComments(ctx, owner, repo, issue.GetNumber(), &commentOps)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, comment := range comments {
+			allComments = append(allComments, *comment)
+		}
+
+		if commentsResp.NextPage == 0 {
+			break
+		}
+		commentOps.Page = commentsResp.NextPage
+	}
+
+	return allComments, nil
+
 }
 
 type Issue struct {
